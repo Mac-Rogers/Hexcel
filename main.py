@@ -1,88 +1,187 @@
-import tkinter as tk
-from tkinter.simpledialog import askstring
+#!/usr/bin/env python3
+
+import sys
 import math
+from PyQt5.QtGui import QBrush, QPen, QPolygonF, QColor, QPainter, QFont
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QMainWindow, QGraphicsTextItem
 
-CELL_RADIUS = 32
-HEX_ROWS = 8      # Number of rows in grid
-HEX_COLS = 10     # Number of cols in grid
 
-class HexCell:
-    def __init__(self, polygon, label, value=""):
-        self.polygon = polygon
-        self.label = label
-        self.value = value
+def hex_corners(center_x, center_y, size):
+    """Return list of 6 QPointF for a pointy-top hex centered at (center_x, center_y)."""
+    # pointy-top orientation: first corner at angle = 30 deg
+    corners = []
+    for i in range(6):
+        angle_deg = 30 + 60 * i
+        angle_rad = math.radians(angle_deg)
+        x = center_x + size * math.cos(angle_rad)
+        y = center_y + size * math.sin(angle_rad)
+        corners.append(QPointF(x, y))
+    return corners
 
-class HexcelApp(tk.Tk):
-    def __init__(self):
+
+def column_to_excel_name(col_index):
+    """Convert column index (0-based) to Excel-style column name (A, B, C, ..., Z, AA, AB, ...)"""
+    result = ""
+    while col_index >= 0:
+        result = chr(65 + (col_index % 26)) + result
+        col_index = col_index // 26 - 1
+        if col_index < 0:
+            break
+    return result
+
+
+class HexItem(QGraphicsPolygonItem):
+    def __init__(self, polygon, row, col):
+        super().__init__(polygon)
+        self.row = row
+        self.col = col
+        self.setPen(QPen(QColor("#cbd5e1"), 0.8))
+        self.setBrush(QBrush(QColor("#ffffff")))
+
+    def hoverEnterEvent(self, event):
+        self.setBrush(QBrush(QColor("#f1f5f9")))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setBrush(QBrush(QColor("#ffffff")))
+        super().hoverLeaveEvent(event)
+
+
+class HexGridScene(QGraphicsScene):
+    def __init__(self, rows, cols, size, spacing=0.0, parent=None):
+        super().__init__(parent)
+        self.rows = rows
+        self.cols = cols
+        self.size = size                # distance center -> corner
+        self.spacing = spacing          # extra gap (set 0 for perfect tiling)
+        self.build_grid()
+
+    def build_grid(self):
+        self.clear()
+        s = self.size
+        # pointy-top metrics:
+        hex_w = math.sqrt(3) * s      # width corner-to-corner horizontally
+        hex_h = 2 * s                  # height corner-to-corner vertically
+        horiz = hex_w                  # horizontal distance between columns' centers
+        vert = 3.0/4.0 * hex_h         # vertical distance between rows' centers
+
+        left_margin = s + 40  # Increased for row labels
+        top_margin = s + 30   # Increased for column labels
+
+        # Create column headers (A, B, C, D, ...)
+        for c in range(self.cols):
+            cx = left_margin + c * horiz + (0 % 2) * (horiz / 2.0)  # Use row 0 for positioning
+            cy = top_margin - 25  # Above the grid
+            
+            col_name = column_to_excel_name(c)
+            text_item = QGraphicsTextItem(col_name)
+            text_item.setDefaultTextColor(QColor("#374151"))
+            text_item.setFont(QFont("Arial", 10, QFont.Bold))
+            
+            # Center the text
+            text_rect = text_item.boundingRect()
+            text_item.setPos(cx - text_rect.width()/2, cy - text_rect.height()/2)
+            self.addItem(text_item)
+
+        # Create row headers (1, 2, 3, 4, ...)
+        for r in range(self.rows):
+            cx = left_margin - 30  # To the left of the grid
+            cy = top_margin + r * vert
+            
+            row_name = str(r + 1)  # 1-based row numbering
+            text_item = QGraphicsTextItem(row_name)
+            text_item.setDefaultTextColor(QColor("#374151"))
+            text_item.setFont(QFont("Arial", 10, QFont.Bold))
+            
+            # Center the text
+            text_rect = text_item.boundingRect()
+            text_item.setPos(cx - text_rect.width()/2, cy - text_rect.height()/2)
+            self.addItem(text_item)
+
+        # Create hex grid
+        for r in range(self.rows):
+            for c in range(self.cols):
+                cx = left_margin + c * horiz + (r % 2) * (horiz / 2.0)
+                cy = top_margin + r * vert
+                pts = hex_corners(cx, cy, s - self.spacing)
+                poly = QPolygonF(pts)
+                item = HexItem(poly, r, c)
+                item.setAcceptHoverEvents(True)
+                self.addItem(item)
+
+        # set scene rect to tightly enclose grid including labels
+        width = left_margin + (self.cols - 1) * horiz + hex_w + 40
+        height = top_margin + (self.rows - 1) * vert + hex_h + 40
+        self.setSceneRect(QRectF(0, 0, width, height))
+
+
+class HexView(QGraphicsView):
+    def __init__(self, scene: HexGridScene, parent=None):
+        super().__init__(scene, parent)
+        self.setRenderHints(self.renderHints() | QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self._last_mouse_pos = None
+        self._pan_active = False
+        self._zoom = 1.0
+
+        # Nice background color
+        self.setBackgroundBrush(QBrush(QColor("#f8fafc")))
+
+    # Mouse pan
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and event.modifiers() & Qt.ControlModifier:
+            self._pan_active = True
+            self._last_mouse_pos = event.pos()
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._pan_active and self._last_mouse_pos is not None:
+            delta = event.pos() - self._last_mouse_pos
+            self._last_mouse_pos = event.pos()
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._pan_active:
+            self._pan_active = False
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    # Wheel to zoom
+    def wheelEvent(self, event):
+        angle = event.angleDelta().y()
+        factor = 1.001 ** angle
+        self._zoom *= factor
+        self.scale(factor, factor)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, rows=20, cols=12, hex_size=30):
         super().__init__()
-        self.title('Hexcel: Hexagonal Excel')
-        self.geometry('950x640')
-        self.canvas = tk.Canvas(self, width=920, height=620, bg="white")
-        self.canvas.pack()
-        self.grid_cells = {}      # (q, r) : HexCell
-        self.selected_cell = None
-        self._draw_grid()
-        self.canvas.bind("<Button-1>", self.on_click)
-        self.canvas.bind("<Double-Button-1>", self.on_dbl_click)
+        self.setWindowTitle("Hexcel")
+        scene = HexGridScene(rows=rows, cols=cols, size=hex_size)
+        view = HexView(scene)
+        self.setCentralWidget(view)
+        self.resize(1000, 700)
 
-    def hex_center(self, q, r):
-        # Pointy-top hex math for neat honeycomb tiling
-        x = CELL_RADIUS * 3/2 * q + 80
-        y = CELL_RADIUS * math.sqrt(3) * (r + 0.5 * (q % 2)) + 80
-        return x, y
 
-    def draw_one_hex(self, cx, cy):
-        points = []
-        for i in range(6):
-            angle_rad = math.pi / 180 * (60 * i - 30)
-            points.append(cx + CELL_RADIUS * math.cos(angle_rad))
-            points.append(cy + CELL_RADIUS * math.sin(angle_rad))
-        return points
+def main():
+    app = QApplication(sys.argv)
+    # create and show
+    win = MainWindow(rows=16, cols=22, hex_size=28)
+    win.show()
+    sys.exit(app.exec_())
 
-    def _draw_grid(self):
-        # Draw column headers
-        for q in range(HEX_COLS):
-            cx, cy = self.hex_center(q, -0.9)
-            self.canvas.create_text(cx, cy, text=chr(q+65), font=('Arial', 13, 'bold'), fill="#222")
-        # Draw hex cells
-        for q in range(HEX_COLS):
-            for r in range(HEX_ROWS):
-                cx, cy = self.hex_center(q, r)
-                pts = self.draw_one_hex(cx, cy)
-                poly = self.canvas.create_polygon(pts, outline="#bbb", fill="#f8faff", width=2)
-                label = self.canvas.create_text(cx, cy, text="", font=('Arial', 12, 'bold'), fill="#222")
-                self.grid_cells[(q, r)] = HexCell(polygon=poly, label=label)
-    
-    def find_cell(self, x, y):
-        # Geometric hit-test for cell under mouse
-        for (q, r), cell in self.grid_cells.items():
-            cx, cy = self.hex_center(q, r)
-            dx, dy = abs(x-cx), abs(y-cy)
-            # Hexes fit in a circle for click testing
-            if dx < CELL_RADIUS * 0.9 and dy < CELL_RADIUS * 0.9:
-                return (q, r)
-        return None
-
-    def on_click(self, event):
-        cell_pos = self.find_cell(event.x, event.y)
-        # Deselect all
-        for c in self.grid_cells.values():
-            self.canvas.itemconfig(c.polygon, outline="#bbb", fill="#f8faff", width=2)
-        if cell_pos:
-            c = self.grid_cells[cell_pos]
-            self.canvas.itemconfig(c.polygon, outline="#0366d6", fill="#ffe19d", width=3)
-            self.selected_cell = cell_pos
-
-    def on_dbl_click(self, event):
-        cell_pos = self.find_cell(event.x, event.y)
-        if cell_pos:
-            c = self.grid_cells[cell_pos]
-            value = askstring("Edit Cell", "Enter value:", initialvalue=c.value)
-            if value is not None:
-                c.value = value
-                self.canvas.itemconfig(c.label, text=value)
-                self.canvas.itemconfig(c.polygon, fill="#ffe19d")
-                self.selected_cell = cell_pos
 
 if __name__ == "__main__":
-    HexcelApp().mainloop()
+    main()
