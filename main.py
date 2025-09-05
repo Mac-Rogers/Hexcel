@@ -72,7 +72,7 @@ class HexGridScene(QGraphicsScene):
         # Create column headers (A, B, C, D, ...)
         for c in range(self.cols):
             cx = left_margin + c * horiz + (0 % 2) * (horiz / 2.0)  # Use row 0 for positioning
-            cy = top_margin - 25  # Above the grid
+            cy = top_margin - 40  # Above the grid
             
             col_name = column_to_excel_name(c)
             text_item = QGraphicsTextItem(col_name)
@@ -86,7 +86,7 @@ class HexGridScene(QGraphicsScene):
 
         # Create row headers (1, 2, 3, 4, ...)
         for r in range(self.rows):
-            cx = left_margin - 30  # To the left of the grid
+            cx = left_margin - 40  # To the left of the grid
             cy = top_margin + r * vert
             
             row_name = str(r + 1)  # 1-based row numbering
