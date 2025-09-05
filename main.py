@@ -43,6 +43,7 @@ class HexItem(QGraphicsPolygonItem):
         self.scene_ref = scene
         self.value = ""
         self.selected = False
+        self.is_fill_selected = False  # For drag-fill selection
         self.setPen(QPen(QColor("#A4A7A6"), 0.8))
         self.setBrush(QBrush(QColor("#ffffff")))
         
@@ -68,18 +69,34 @@ class HexItem(QGraphicsPolygonItem):
         self.text_item.setPlainText(self.value)
         self.update_text_position()
 
+    def update_appearance(self):
+        """Update visual appearance based on selection state"""
+        if self.selected:
+            self.setPen(QPen(QColor("#0F773D"), 3))  # Thick green border
+            self.setBrush(QBrush(QColor("#ffffff")))  # Keep white fill
+            self.setZValue(1)
+            self.text_item.setZValue(2)
+        elif self.is_fill_selected:
+            self.setPen(QPen(QColor("#0F773D"), 2))  # Blue border for fill selection
+            self.setBrush(QBrush(QColor("#ffffff")))  # Light blue fill
+            self.setZValue(1)
+            self.text_item.setZValue(2)
+        else:
+            self.setPen(QPen(QColor("#A4A7A6"), 0.8))
+            self.setBrush(QBrush(QColor("#ffffff")))
+            self.setZValue(0)
+            self.text_item.setZValue(0)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             # Clear previous selection
             self.scene_ref.clear_selection()
-            # Select this hex with highlighted border
+            # Select this hex
             self.selected = True
-            self.setPen(QPen(QColor("#0F773D"), 3))  # Thick green border
-            self.setBrush(QBrush(QColor("#ffffff")))  # Keep white fill
+            self.update_appearance()
             
-            # Bring selected hex to front, but text even higher
-            self.setZValue(1)
-            self.text_item.setZValue(2)  # Text stays on top
+            # Start drag operation
+            self.scene_ref.start_drag_operation(self, event.scenePos())
             
             print(f"Selected cell [{self.row}][{self.col}]: '{self.value}'")
         super().mousePressEvent(event)
@@ -94,15 +111,16 @@ class HexItem(QGraphicsPolygonItem):
         self.scene_ref.start_cell_editing(self)
 
     def hoverEnterEvent(self, event):
-        if not self.selected:
+        if not self.selected and not self.is_fill_selected:
             self.setBrush(QBrush(QColor("#f1f5f9")))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        if not self.selected:
+        if not self.selected and not self.is_fill_selected:
             self.setBrush(QBrush(QColor("#ffffff")))
-            self.setPen(QPen(QColor("#A4A7A6"), 0.8))  # Reset border on hover leave
+            self.setPen(QPen(QColor("#A4A7A6"), 0.8))
         super().hoverLeaveEvent(event)
+
 
 
 class InfiniteHexGridScene(QGraphicsScene):
@@ -110,9 +128,15 @@ class InfiniteHexGridScene(QGraphicsScene):
         super().__init__(parent)
         self.hex_size = size
         self.spacing = spacing
-        self.hex_items = {}  # Store hex items by (row, col)
+        self.hex_items = {}
         self.current_editor = None
-        self.visible_items = set()  # Track currently visible items
+        self.visible_items = set()
+        
+        # Drag operation state
+        self.drag_active = False
+        self.drag_start_item = None
+        self.drag_start_pos = None
+        self.fill_selection = set()
         
         # Calculate hex metrics
         s = self.hex_size
@@ -133,6 +157,180 @@ class InfiniteHexGridScene(QGraphicsScene):
         cx = self.left_margin + col * self.horiz + (row % 2) * (self.horiz / 2.0)
         cy = self.top_margin + row * self.vert
         return cx, cy
+
+    def get_hex_at_position(self, scene_pos):
+        """Find which hex cell is at the given scene position"""
+        # Approximate calculation - find closest hex
+        x, y = scene_pos.x(), scene_pos.y()
+        
+        # Rough estimate of row and column
+        approx_row = max(0, int((y - self.top_margin) / self.vert))
+        approx_col = max(0, int((x - self.left_margin) / self.horiz))
+        
+        # Check nearby cells to find the exact one
+        min_distance = float('inf')
+        closest_cell = None
+        
+        for r in range(max(0, approx_row - 2), approx_row + 3):
+            for c in range(max(0, approx_col - 2), approx_col + 3):
+                if (r, c) in self.hex_items:
+                    hex_item = self.hex_items[(r, c)]
+                    if isinstance(hex_item, HexItem):
+                        hex_center = hex_item.boundingRect().center()
+                        hex_pos = hex_item.scenePos() + hex_center
+                        distance = ((hex_pos.x() - x) ** 2 + (hex_pos.y() - y) ** 2) ** 0.5
+                        if distance < min_distance and distance < self.hex_size:
+                            min_distance = distance
+                            closest_cell = (r, c)
+        
+        return closest_cell
+
+    def get_hex_neighbors(self, row, col):
+        """Get the 6 neighboring hex coordinates"""
+        neighbors = []
+        if row % 2 == 0:  # Even row
+            offsets = [(-1, -1), (-1, 0), (0, -1), (0, 1), (1, -1), (1, 0)]
+        else:  # Odd row
+            offsets = [(-1, 0), (-1, 1), (0, -1), (0, 1), (1, 0), (1, 1)]
+        
+        for dr, dc in offsets:
+            new_row, new_col = row + dr, col + dc
+            if new_row >= 0 and new_col >= 0:
+                neighbors.append((new_row, new_col))
+        return neighbors
+
+    def get_line_cells(self, start_row, start_col, end_row, end_col):
+        """Get all cells in a line from start to end (hexagonal path)"""
+        if start_row == end_row and start_col == end_col:
+            return [(start_row, start_col)]
+        
+        cells = [(start_row, start_col)]
+        
+        # Determine direction
+        row_diff = end_row - start_row
+        col_diff = end_col - start_col
+        
+        # Simple linear interpolation for hex grid
+        current_row, current_col = start_row, start_col
+        
+        while (current_row, current_col) != (end_row, end_col):
+            # Move towards target
+            if abs(row_diff) > abs(col_diff):
+                # Primarily vertical movement
+                if row_diff > 0:
+                    current_row += 1
+                else:
+                    current_row -= 1
+            else:
+                # Primarily horizontal movement
+                if col_diff > 0:
+                    current_col += 1
+                else:
+                    current_col -= 1
+            
+            # Ensure we don't go negative
+            current_row = max(0, current_row)
+            current_col = max(0, current_col)
+            
+            cells.append((current_row, current_col))
+            
+            # Update differences
+            row_diff = end_row - current_row
+            col_diff = end_col - current_col
+            
+            # Safety check to prevent infinite loops
+            if len(cells) > 100:
+                break
+        
+        return cells
+
+    def start_drag_operation(self, hex_item, start_pos):
+        """Start a drag operation from the given hex item"""
+        self.drag_active = True
+        self.drag_start_item = hex_item
+        self.drag_start_pos = start_pos
+        self.fill_selection = set()
+
+    def update_drag_selection(self, current_pos):
+        """Update the drag selection based on current mouse position"""
+        if not self.drag_active or not self.drag_start_item:
+            return
+        
+        # Find hex at current position
+        current_cell = self.get_hex_at_position(current_pos)
+        if not current_cell:
+            return
+        
+        current_row, current_col = current_cell
+        start_row, start_col = self.drag_start_item.row, self.drag_start_item.col
+        
+        # Clear previous fill selection
+        for row, col in self.fill_selection:
+            if (row, col) in self.hex_items:
+                hex_item = self.hex_items[(row, col)]
+                if isinstance(hex_item, HexItem):
+                    hex_item.is_fill_selected = False
+                    hex_item.update_appearance()
+        
+        # Get cells in line from start to current
+        line_cells = self.get_line_cells(start_row, start_col, current_row, current_col)
+        
+        # Update fill selection
+        self.fill_selection = set(line_cells)
+        for row, col in self.fill_selection:
+            # Create hex if it doesn't exist
+            if (row, col) not in self.hex_items:
+                self.create_hex_item(row, col)
+            
+            hex_item = self.hex_items[(row, col)]
+            if isinstance(hex_item, HexItem):
+                if (row, col) != (start_row, start_col):  # Don't change the original selection
+                    hex_item.is_fill_selected = True
+                hex_item.update_appearance()
+
+    def finish_drag_operation(self):
+        """Finish the drag operation and fill cells with the original value"""
+        if not self.drag_active or not self.drag_start_item:
+            return
+        
+        original_value = self.drag_start_item.value
+        
+        # Fill all selected cells with the original value
+        for row, col in self.fill_selection:
+            if (row, col) in self.hex_items:
+                hex_item = self.hex_items[(row, col)]
+                if isinstance(hex_item, HexItem):
+                    hex_item.set_value(original_value)
+                    hex_item.is_fill_selected = False
+                    hex_item.update_appearance()
+        
+        # Reset drag state
+        self.drag_active = False
+        self.drag_start_item = None
+        self.drag_start_pos = None
+        self.fill_selection = set()
+        
+        print(f"Filled {len(self.fill_selection)} cells with value: '{original_value}'")
+
+    def clear_selection(self):
+        """Clear all selections"""
+        for item in self.hex_items.values():
+            if hasattr(item, 'selected') and hasattr(item, 'is_fill_selected'):
+                item.selected = False
+                item.is_fill_selected = False
+                item.update_appearance()
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move for drag operations"""
+        if self.drag_active:
+            self.update_drag_selection(event.scenePos())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to finish drag operations"""
+        if event.button() == Qt.LeftButton and self.drag_active:
+            self.finish_drag_operation()
+        super().mouseReleaseEvent(event)
 
     def get_visible_range(self, view_rect):
         """Calculate which hex cells should be visible in the given view rectangle"""
