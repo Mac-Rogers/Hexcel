@@ -597,7 +597,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Hexcel")
         
         # Start in fullscreen
-        self.showMaximized()
+        self.showFullScreen()
 
         self.scene = InfiniteHexGridScene(size=hex_size)
         self.view = InfiniteHexView(self.scene)
