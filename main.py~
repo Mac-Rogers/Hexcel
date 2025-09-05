@@ -124,9 +124,9 @@ class InfiniteHexGridScene(QGraphicsScene):
         self.left_margin = s + 40
         self.top_margin = s + 30
         
-        # Set scene rect starting from origin (0,0)
-        large_size = 100000
-        self.setSceneRect(QRectF(0, 0, large_size, large_size))
+        # Set a very large scene rect to allow infinite scrolling
+        large_size = 1000000
+        self.setSceneRect(QRectF(-large_size, -large_size, 2*large_size, 2*large_size))
 
     def get_hex_position(self, row, col):
         """Calculate the center position of a hex at given row, col"""
@@ -349,10 +349,8 @@ class InfiniteHexView(QGraphicsView):
         self.update_scene_items()
 
     def showEvent(self, event):
-        """Update items when view is first shown and center on origin"""
+        """Update items when view is first shown"""
         super().showEvent(event)
-        # Start at the top-left (origin)
-        self.ensureVisible(0, 0, 1, 1, 0, 0)  # Show origin without margins
         self.update_scene_items()
 
     # Mouse pan
