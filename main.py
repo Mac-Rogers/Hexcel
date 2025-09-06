@@ -793,19 +793,19 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         # File menu (Cancel Edit + Exit) and small Help item
-        mb = self.menuBar()
-        file_menu = mb.addMenu("&File")
-        cancel_act = QAction("Cancel Edit", self); cancel_act.setShortcut("Esc")
-        cancel_act.triggered.connect(self._cancel_edit)
-        exit_act = QAction("Exit", self); exit_act.triggered.connect(self.close)
-        file_menu.addAction(cancel_act); file_menu.addSeparator(); file_menu.addAction(exit_act)
+        # mb = self.menuBar()
+        # file_menu = mb.addMenu("&File")
+        # cancel_act = QAction("Cancel Edit", self); cancel_act.setShortcut("Esc")
+        # cancel_act.triggered.connect(self._cancel_edit)
+        # exit_act = QAction("Exit", self); exit_act.triggered.connect(self.close)
+        # file_menu.addAction(cancel_act); file_menu.addSeparator(); file_menu.addAction(exit_act)
 
-        help_menu = mb.addMenu("&Help")
-        help_text = QAction("Formula Help", self)
-        help_text.triggered.connect(lambda: self.statusBar().showMessage(
-            "Functions: SUM, AVERAGE/AVG, MIN, MAX, COUNT, PRODUCT, ABS. Use A1 or A1:B3; nesting allowed.",
-            8000))
-        help_menu.addAction(help_text)
+        # help_menu = mb.addMenu("&Help")
+        # help_text = QAction("Formula Help", self)
+        # help_text.triggered.connect(lambda: self.statusBar().showMessage(
+        #     "Functions: SUM, AVERAGE/AVG, MIN, MAX, COUNT, PRODUCT, ABS. Use A1 or A1:B3; nesting allowed.",
+        #     8000))
+        # help_menu.addAction(help_text)
 
         self.statusBar().showMessage("Ready — Ctrl+Click to pan • Wheel to zoom")
         self.scene.cellSelected.connect(self._on_cell_selected)
