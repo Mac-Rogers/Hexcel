@@ -782,7 +782,6 @@ class MainWindow(QMainWindow):
 
         # Ribbon (screenshot) at top
         img_path = find_ribbon_image()
-        print("Ribbon path:", img_path if img_path else "(not found in project folder)")
         self.ribbon = RibbonBanner(img_path or "", height=274)
 
         central = QWidget()
